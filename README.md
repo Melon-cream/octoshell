@@ -110,9 +110,3 @@ Run formatting and tests:
 gofmt -w ./cmd ./internal
 go test ./...
 ```
-
-## Notes
-
-- This project currently performs static tests only.
-- Real API verification must be done with your own credentials.
-- Local output files under `outputs/` are ignored by Git to avoid accidental publication.
