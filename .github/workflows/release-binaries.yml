@@ -1,0 +1,116 @@
+name: Release Binaries
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag such as v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - name: Resolve tag
+        id: tag
+        env:
+          EVENT_TAG: ${{ github.ref_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          tag="${INPUT_TAG:-$EVENT_TAG}"
+          if [ -z "$tag" ]; then
+            echo "tag is required" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure release exists
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          generate_release_notes: false
+          draft: false
+          prerelease: false
+
+  build:
+    needs: prepare-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            archive: tar.gz
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            archive: tar.gz
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+            archive: tar.gz
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            archive: tar.gz
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binary
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          binary="octoshell"
+          if [ "${GOOS}" = "windows" ]; then
+            binary="${binary}.exe"
+          fi
+          go build -trimpath -ldflags="-s -w -X octoshell/cmd/octoshell.version=${{ needs.prepare-release.outputs.version }}" -o "dist/${binary}" ./cmd/octoshell
+
+      - name: Package tar.gz
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          artifact="octoshell_${{ needs.prepare-release.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
+          tar -C dist -czf "$artifact" .
+          echo "ASSET=$artifact" >> "$GITHUB_ENV"
+
+      - name: Package zip
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $artifact = "octoshell_${{ needs.prepare-release.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}.zip"
+          Compress-Archive -Path dist\* -DestinationPath $artifact
+          "ASSET=$artifact" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare-release.outputs.tag }}
+          generate_release_notes: false
+          files: ${{ env.ASSET }}

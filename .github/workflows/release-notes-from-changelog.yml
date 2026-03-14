@@ -1,0 +1,84 @@
+name: Release Notes From Changelog
+
+on:
+  release:
+    types:
+      - published
+      - edited
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag such as v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  update-release-notes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: tag
+        env:
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          tag="${EVENT_TAG:-$INPUT_TAG}"
+          if [ -z "$tag" ]; then
+            echo "tag is required" >&2
+            exit 1
+          fi
+          version="${tag#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Extract changelog section
+        id: changelog
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          notes="$(awk -v version="$VERSION" '
+            $0 ~ "^## \\[" version "\\]" { capture=1; next }
+            capture && $0 ~ "^## \\[" { exit }
+            capture { print }
+          ' CHANGELOG.md)"
+
+          if [ -z "$notes" ]; then
+            echo "Could not find CHANGELOG.md section for version $VERSION" >&2
+            exit 1
+          fi
+
+          {
+            echo "notes<<EOF"
+            printf "%s\n" "$notes"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Update release notes
+        uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          RELEASE_NOTES: ${{ steps.changelog.outputs.notes }}
+        with:
+          script: |
+            const tag = process.env.RELEASE_TAG;
+            const notes = process.env.RELEASE_NOTES;
+            const { owner, repo } = context.repo;
+
+            const release = await github.rest.repos.getReleaseByTag({
+              owner,
+              repo,
+              tag,
+            });
+
+            await github.rest.repos.updateRelease({
+              owner,
+              repo,
+              release_id: release.data.id,
+              body: notes,
+            });
