@@ -110,9 +110,3 @@ go run ./cmd/octoshell \
 gofmt -w ./cmd ./internal
 go test ./...
 ```
-
-## 注意
-
-- 現時点では静的テストのみ実施しています
-- 実 API 確認は手元の認証情報で行ってください
-- `outputs/` 配下のローカル出力は誤って公開しないよう Git の管理対象外にしています
